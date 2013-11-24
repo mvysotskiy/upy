@@ -2,6 +2,7 @@
 """
 Created on Sun Dec  5 23:30:44 2010
 
+@author: Ludovic Autin - ludovic.autin@gmail.com
 """
 #C4d module
 import c4d
@@ -30,31 +31,6 @@ from upy.hostHelper import Helper
 if hostHelper.usenumpy:
     import numpy
 
-
-from c4d.threading import C4DThread
-
-class UserThread(C4DThread):
-
-    def Main(self,func,*args,**kw):
-        # Put in your code here
-        # which you want to run
-        # in another thread
-        if self.TestBreak():
-                print "Canceled thread-execution."
-                return
-        func(*args, **kw)
-
-    def cb(self,):
-        if self.TestBreak():
-            return False
-        return True
-    
-    def TestDBreak(self):
-        bc = c4d.BaseContainer()
-        c4d.gui.GetInputState(c4d.BFM_INPUT_KEYBOARD, c4d.KEY_ESC, bc)
-        # how to proceed?
-        #break the process ?
-        
 class c4dSynchro:
     #period problem
     def __init__(self,helper=None,use_generator=False):
@@ -106,7 +82,7 @@ class c4dSynchro:
         if not len(self.liste_cb):
             self.helper.deleteObject(self.object)
 
-    def create_str_for_cb(self,):
+    def create_str_for_cb(self,frequency = 1):
         c4d.synchro = self.parentObj
         c4d.synchro_cb = self.liste_cb
         self.callback = """
@@ -118,8 +94,9 @@ def main():
     fps = doc.GetFps()
     #getCurrent time
     frame=doc.GetTime().GetFrame(fps)
-    for cb in theCallback:
-        cb(frame)
+    if frame%""" + str(frequency) +""" == 0:
+        for cb in theCallback:
+            cb(frame)
 """       
         
     def doit(self,*args,**kw):#period,time,userData=None):
@@ -208,14 +185,12 @@ class c4dHelper(Helper):
     VERBOSE=0
     DEBUG=0
     host = "c4d"
-    renderInstance = True
     
     def __init__(self,master=None,**kw):
         Helper.__init__(self)
         #we can define here some function alias
         self.updateAppli = self.update
         #some synonym,dejaVu compatilbity->should disappear later
-        self._render_instance=True
         self.Cube = self.box
         self.Box = self.box
         self.Geom = self.newEmpty
@@ -266,22 +241,10 @@ class c4dHelper(Helper):
               "wavyTurbulence":c4d.NOISE_WAVY_TURB,
               "zada":c4d.NOISE_ZADA,       
              }
-        #
-             
-    def start_thread(self,job):
-        thread = UserThread()
-        thread.Start()
-        # Do some other operations here
-        thread.Wait(True) #
 
-    def testForEscape(self,):
-        bc = c4d.BaseContainer()
-        c4d.gui.GetInputState(c4d.BFM_INPUT_KEYBOARD, c4d.KEY_ESC, bc)
-        return bc.GetLong(c4d.BFM_INPUT_VALUE)
-
-    def synchronize(self,cb):
+    def synchronize(self,cb, frequency = 1):
         self.synchro_cb.add_callback(cb)
-        self.synchro_cb.create_str_for_cb()
+        self.synchro_cb.create_str_for_cb(frequency)
         self.synchro_cb.set_callback()
 
     def unsynchronize(self,cb):
@@ -295,7 +258,6 @@ class c4dHelper(Helper):
             else :
                 return c4d.documents.GetActiveDocument()
         else :
-            #self.doc = c4d.documents.GetActiveDocument()
             return c4d.documents.GetActiveDocument()
 
 #    @classmethod    
@@ -379,26 +341,17 @@ class c4dHelper(Helper):
 
     def getMeshFrom(self,obj):
         return self.getMesh(obj)
-
-    def getFirstMesh (self,m):
-        if m is None :
-            return None
-        #print ("getFirstMesh",m,m.GetType(),m.GetType() == c4d.Opolygon)
-        if m.GetType() == c4d.Opolygon :
-            return m
-        elif m.GetType() == c4d.Onull :
-            return self.getFirstMesh(m.GetDown())
-        elif m.GetType() == c4d.Oinstance :
-            return self.getFirstMesh(m[c4d.INSTANCEOBJECT_LINK])
-        else :
-            #print ("what ? getFirstMesh",m,m.GetType())
-            return m#can be cylinder#cself.getFirstMesh(m.GetDown())
         
     def getMesh(self,m):
         if type(m) is str:
             m = self.getCurrentScene().SearchObject(m)
         if m is not None :
-            return self.getFirstMesh(m)
+            if m.GetType() == c4d.Onull :
+                return m.GetDown()#should return all child ?
+            elif m.GetType() == c4d.Oinstance :
+                return self.getMesh(m[c4d.INSTANCEOBJECT_LINK])
+            else :
+                return m
         else :
             return None
             
@@ -418,9 +371,6 @@ class c4dHelper(Helper):
             return name
         else :
             return name
-
-    def getObjectName(self,o,**kw):
-        return self.getName(self,o)
         
     def setName(self,o,name):
         if name is None :
@@ -490,7 +440,7 @@ class c4dHelper(Helper):
         instance[1001]=object       
         instance.SetName(name)#.replace(":","_")
         #render instance tag ?
-        instance[c4d.INSTANCEOBJECT_RENDERINSTANCE] = self.renderInstance
+        instance[c4d.INSTANCEOBJECT_RENDERINSTANCE] = True
         if c4dmatrice !=None :
             #type of matre
             instance.SetMg(c4dmatrice)
@@ -805,14 +755,8 @@ class c4dHelper(Helper):
             sc = [sc,sc,sc]
         obj.SetAbsScale(self.FromVec(sc))
     
-    def rotateObj(self,obj,rot,**kw):
+    def rotateObj(self,obj,rot):
         #take radians, give degrees
-        #should rotate the primitive and not the parent 
-        primitive = False
-        if "primitive" in kw :
-            primitive = kw["primitive"]
-        if primitive :
-            obj = self.getMesh(obj)
         obj[c4d.ID_BASEOBJECT_ROTATION, c4d.VECTOR_X]=float(rot[1]) #rotation about Y #H
         obj[c4d.ID_BASEOBJECT_ROTATION, c4d.VECTOR_Y]=float(rot[2]) #rotation about X #P
         obj[c4d.ID_BASEOBJECT_ROTATION, c4d.VECTOR_Z]=float(rot[0]) #rotation about Z #B
@@ -868,7 +812,6 @@ class c4dHelper(Helper):
           # create standard material
           __mat = doc.SearchMaterial(name) 
           if __mat != None :
-              self.colorMaterial(__mat,color)
               return __mat              
           else :
               __mat = c4d.BaseMaterial(c4d.Mmaterial)
@@ -1194,21 +1137,19 @@ class c4dHelper(Helper):
             texture[1010] = material
         return stick
         
-    def Cylinder(self,name,radius=1.,length=1.,res=3, pos = [0.,0.,0.],parent=None,**kw):
+    def Cylinder(self,name,radius=1.,length=1.,res=10, pos = [0.,0.,0.],parent=None,**kw):
 #        QualitySph={"0":16,"1":3,"2":4,"3":8,"4":16,"5":32}
         baseCyl = c4d.BaseObject(self.CYLINDER)
         baseCyl.SetName(name)
         baseCyl[5000] = radius
         baseCyl[5005] = length
         #if str(res) not in QualitySph.keys():
-        #Default axes is +Y
         baseCyl[c4d.PRIM_CYLINDER_SEG] = res
         if "axis" in kw : #orientation
             dic = {"+X":0,"-X":1,"+Y":2,"-Y":3,"+Z":4,"-Z":5}
             if type(kw["axis"]) is str :
                 axis = dic[kw["axis"]]
             else : 
-#                axis = dic[self.rerieveAxis([kw["axis"][2],kw["axis"][1],kw["axis"][0]])]
                 axis = dic[self.rerieveAxis(kw["axis"])]
             baseCyl[c4d.PRIM_AXIS]=axis
 #        else :#default is +Y
@@ -1319,13 +1260,6 @@ class c4dHelper(Helper):
 #            texture[1010] = mat[atN[0]]
 #            k=k+1
 #        return spher
-
-    def Spheres(self,name,vertices=[],radii=[],colors=[],**kw):
-        """match DejaVu API """
-        #need a base sphere
-        base=self.Sphere(name+"_base")[0]
-        return self.instancesSphere(name,vertices,radii,base,
-                        colors,None)
         
     def instancesSphere(self,name,centers,radii,meshsphere,
                         colors,scene,parent=None):
@@ -1349,9 +1283,9 @@ class c4dHelper(Helper):
                 rad = radii[i]
             sphs[i][905]=c4d.Vector(float(rad),float(rad),float(rad))
             texture = sphs[i].MakeTag(c4d.Ttexture)
-            #if mat == None :
-            if colors is not None and  i < len(colors) and colors[i] is not None :
-                mat = self.addMaterial("matsp"+str(i),colors[i])
+            if mat == None :
+                if colors is not None and  i < len(colors) and colors[i] is not None :
+                    mat = self.addMaterial("matsp"+str(i),colors[i])
             texture[1010] = mat#mat[bl.retrieveColorName(sphColors[i])]
             self.addObjectToScene(scene,sphs[i],parent=parent)
         return sphs
@@ -1704,7 +1638,6 @@ class c4dHelper(Helper):
         loft=c4d.BaseObject(c4d.Osweep)
         loft.SetName(name)
         loft.MakeTag(c4d.Tphong)
-        loft[c4d.SWEEPOBJECT_RAILDIRECTION] = 0
         #create the dedicayed material
 #        if mat == None : 
 #                texture[1010] = self.create_loft_material(name='mat_'+name)
@@ -1733,11 +1666,11 @@ class c4dHelper(Helper):
         if "shape" in kw:
             if type(kw["shape"]) == str :
                 shape = self.build_2dshape("sh_"+kw["shape"]+"_"+spline.GetName(),
-                                           kw["shape"])[0]
+                                           kw["shape"])
             else :
                 shape = kw["shape"]
         if shape is None :
-            shape = self.build_2dshape("sh_circle"+spline.GetName())[0]
+            shape = self.build_2dshape("sh_circle"+spline.GetName())
         if "clone" in kw and kw["clone"] :
             spline_clone = spline.GetClone()
             self.resetTransformation(spline_clone)
@@ -1792,7 +1725,7 @@ class c4dHelper(Helper):
             for i in range(len(shapedic[type]["size"])) :
                 shape[shapedic[type]["size"][i]] = dopts[i]
         self.addObjectToScene(None,shape)
-        return shape,None
+        return shape
         
     def createShapes2Dspline(self,doc=None,parent=None):
         circle=c4d.BaseObject(self.CIRCLE)
@@ -2830,7 +2763,7 @@ class c4dHelper(Helper):
                     else :
                         mx = mat 
                 if globalT :
-                    instance[-1].SetMg(mx)#scaling ?
+                    instance[-1].SetMg(mx)
                 else :
                     instance[-1].SetMl(mx)
             #instance[-1].MakeTag(c4d.Ttexture)
@@ -4418,7 +4351,7 @@ class c4dHelper(Helper):
         if "rotation" in key :
             mo = self.getTransformation(obj)
             m = self.ToMat(mo)#.transpose()
-            mws = m.transpose()#Transpose ?
+            mws = m.transpose()
             rotMatj = mws[:]
             rotMatj[3][:3]*=0.0
             res.append(rotMatj)
@@ -4651,13 +4584,8 @@ class c4dHelper(Helper):
   
     def DecomposeMesh(self,poly,edit=True,copy=True,tri=True,transform=True,fn=False):
         #make it editable
-        poly = self.getMesh(poly)
-#        print ("Decompose",poly,poly.GetType(),poly.GetType() == c4d.Opolygon)
-    
         if edit :
             poly = self.makeEditable(poly,copy=copy)
-            #here problem when name is identic with parent and mesh
-            poly = self.getMesh(self.getObject(self.getName(poly)))
         #triangulate
         if tri:
             self.triangulate(poly)
@@ -4701,15 +4629,12 @@ class c4dHelper(Helper):
         #need to apply the transformation
 #        vnormals=self.FixNormals(vertices,faces, vnormals,fn=fnormals)# v,f,vn
         if transform :
-            #transpose ?
             mat = self.getTransformation(poly)
             #c4dmat = poly.GetMg()
             #mat,imat = self.c4dMat2numpy(c4dmat)
             vertices = self.ApplyMatrix(vertices,self.ToMat(mat))
-            m=numpy.identity(4)
-            m[:3,:3]=numpy.array(self.ToMat(mat))[:3,:3]
-            vnormals = self.ApplyMatrix(vnormals,m)#rotation only ?
-        #fix the normals ? 
+#            vnormals = self.ApplyMatrix(vnormals,self.ToMat(mat))
+        #fix the normals
         if edit and copy :
             self.getCurrentScene().SetActiveObject(poly)
             c4d.CallCommand(100004787) #delete the obj       
@@ -4830,12 +4755,9 @@ class c4dHelper(Helper):
             return R          
 
     def read(self,filename,**kw):
-#        fileName, fileExtension = os.path.splitext(filename)
+        fileName, fileExtension = os.path.splitext(filename)
         doc = self.getCurrentScene()
-#        print self
-#        print doc ,doc.IsAlive()
-#        print c4d.documents.GetActiveDocument(),c4d.documents.GetActiveDocument().IsAlive()
-        c4d.documents.MergeDocument(doc,str(filename),c4d.SCENEFILTER_OBJECTS|c4d.SCENEFILTER_MATERIALS)
+        c4d.documents.MergeDocument(doc,filename,c4d.SCENEFILTER_OBJECTS|c4d.SCENEFILTER_MATERIALS)
         
 #        else :
 #            c4d.documents.LoadFile(filename)
@@ -4880,16 +4802,6 @@ class c4dHelper(Helper):
             return intersect,coll.GetIntersectionCount()
         return intersect
 
-    def removeNormalTag(self,obj,**kw):
-        obj = self.getObject(obj)
-#        tags = obj.GetTags(c4d.Tnormal) 
-        obj.KillTag(c4d.Tnormal)
-#        tokill=[]
-#        for i,t in enumerate(tags):
-#            if isinstance(t,c4d.NormalTag):
-#                tokill.append(i)
-#        [obj.KillTag(i) for i in tokill]
-        
 import time
 class TimerDialog(c4d.gui.SubDialog):
     """
